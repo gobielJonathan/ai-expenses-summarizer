@@ -1,0 +1,163 @@
+{
+  "name": "Gmail Bank Transaction Notifications",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth2",
+          "name": "Gmail OAuth2 Account"
+        }
+      },
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            { "mode": "everyMinutes", "value": 5 }
+          ]
+        },
+        "filters": {
+          "readStatus": "unread",
+          "sender": "notifikasi@bca.co.id,hello@jenius.com,alerts@uob.co.id,info@bri.co.id,no-reply@klikbca.com,notification@jenius.com,uob.alerts@uob.com,hibca@bca.co.id"
+        },
+        "options": {
+          "downloadAttachments": false
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Detect Bank & Parse Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300],
+      "parameters": {
+        "jsCode": "// Detect bank type and parse transaction from notification email\nconst item = $input.first();\nconst { from, subject, text, html } = item.json;\n\nconst body = (text || html || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\nconst sender = (from || '').toLowerCase();\nconst subjectLow = (subject || '').toLowerCase();\n\n// ── Helper functions ──────────────────────────────────────────────────────────\nfunction parseAmount(str) {\n  // Matches: Rp 1.234.567,89 / Rp1,234,567.89 / IDR 1234567\n  const cleaned = str.replace(/[^\\d,\\.]/g, '');\n  // Remove thousand separators (dots before 3-digit groups at end)\n  const normalized = cleaned.replace(/\\.(\\d{3})([\\.,]|$)/g, '$1$2').replace(',', '.');\n  return parseFloat(normalized) || 0;\n}\n\nfunction extractAmount(text) {\n  const patterns = [\n    /Rp\\.?\\s*([\\d.,]+)/i,\n    /IDR\\s*([\\d.,]+)/i,\n    /nominal[:\\s]+Rp\\.?\\s*([\\d.,]+)/i,\n    /amount[:\\s]+Rp\\.?\\s*([\\d.,]+)/i,\n    /sebesar\\s+Rp\\.?\\s*([\\d.,]+)/i,\n  ];\n  for (const p of patterns) {\n    const m = text.match(p);\n    if (m) return parseAmount(m[1]);\n  }\n  return 0;\n}\n\nfunction extractMerchant(text, bankType) {\n  const patterns = {\n    BCA: [\n      /(?:di|pada|to|merchant)[:\\s]+([A-Z0-9 \\-\\/&.']+?)(?:\\n|\\r|\\s{2,}|Tgl|Tanggal|Rp)/i,\n      /keterangan[:\\s]+([^\\n\\r]{3,80})/i,\n    ],\n    Jenius: [\n      /(?:at|di)\\s+([A-Z0-9 \\-\\/&.']+?)(?:\\n|\\r|\\s{2,}|\\.\\s)/i,\n      /merchant[:\\s]+([^\\n\\r]{3,80})/i,\n    ],\n    UOB: [\n      /(?:at|merchant)[:\\s]+([A-Z0-9 \\-\\/&.'*]+?)(?:\\n|\\r|\\s{2,}|on\\s)/i,\n    ],\n    BRI: [\n      /(?:di|merchant|kepada)[:\\s]+([A-Z0-9 \\-\\/&.']+?)(?:\\n|\\r|\\s{2,}|Rp)/i,\n    ],\n  };\n  const bankPatterns = patterns[bankType] || [];\n  for (const p of bankPatterns) {\n    const m = text.match(p);\n    if (m) return m[1].trim();\n  }\n  return 'Unknown Merchant';\n}\n\nfunction extractDate(text) {\n  const patterns = [\n    // DD/MM/YYYY HH:MM\n    /(\\d{1,2})[\\/-](\\d{1,2})[\\/-](\\d{4})(?:\\s+(\\d{1,2}):(\\d{2}))?/,\n    // DD MMM YYYY\n    /(\\d{1,2})\\s+(Jan|Feb|Mar|Apr|Mei|Jun|Jul|Agu|Sep|Okt|Nov|Des|May|Aug|Oct)\\s+(\\d{4})/i,\n    // YYYY-MM-DD\n    /(\\d{4})-(\\d{2})-(\\d{2})/,\n  ];\n  const monthMap = {\n    jan:1, feb:2, mar:3, apr:4, mei:5, may:5, jun:6,\n    jul:7, agu:8, aug:8, sep:9, okt:10, oct:10, nov:11, des:12,\n  };\n  for (const p of patterns) {\n    const m = text.match(p);\n    if (m) {\n      try {\n        if (m[0].match(/\\d{4}-\\d{2}-\\d{2}/)) return new Date(m[0]).toISOString();\n        if (typeof m[3] === 'string' && isNaN(Number(m[3]))) {\n          // DD MMM YYYY\n          const month = monthMap[(m[3] || '').toLowerCase().slice(0,3)];\n          if (month) return new Date(Number(m[4]), month - 1, Number(m[1])).toISOString();\n        }\n        const [, d, mo, y, h = '0', min = '0'] = m;\n        return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(min)).toISOString();\n      } catch {\n        // fall through\n      }\n    }\n  }\n  return new Date().toISOString();\n}\n\nfunction detectPaymentType(text) {\n  const creditKeywords = /kredit|credit card|kartu kredit|cc|cicilan/i;\n  const debitKeywords = /debit|tabungan|rekening|transfer|tarik tunai/i;\n  if (creditKeywords.test(text)) return 'credit';\n  if (debitKeywords.test(text)) return 'debit';\n  return 'debit'; // default\n}\n\n// ── Detect bank ───────────────────────────────────────────────────────────────\nlet bankType = null;\nif (sender.includes('bca') || subjectLow.includes('bca') || body.includes('BCA')) {\n  bankType = 'BCA';\n} else if (sender.includes('jenius') || subjectLow.includes('jenius') || body.includes('Jenius')) {\n  bankType = 'Jenius';\n} else if (sender.includes('uob') || subjectLow.includes('uob') || body.includes('UOB')) {\n  bankType = 'UOB';\n} else if (sender.includes('bri') || subjectLow.includes('bri') || body.includes('BRI')) {\n  bankType = 'BRI';\n}\n\nif (!bankType) {\n  return [{ json: { skip: true, reason: 'Not a supported bank notification' } }];\n}\n\nconst amount = extractAmount(body);\nif (amount <= 0) {\n  return [{ json: { skip: true, reason: 'No valid amount found', bankType, body: body.slice(0, 200) } }];\n}\n\nconst merchant = extractMerchant(body, bankType);\nconst transactionDate = extractDate(body);\nconst paymentType = detectPaymentType(body);\n\nreturn [{\n  json: {\n    skip: false,\n    bankType,\n    paymentType,\n    merchant,\n    amount,\n    currency: 'IDR',\n    transactionDate,\n    _debug: { subject, sender: from, bodySnippet: body.slice(0, 300) },\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Is Valid Transaction?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-01",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "POST to Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1000, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "finance-api-key",
+          "name": "Finance Backend API"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/v1/transactions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "bankType": "={{ $json.bankType }}",
+          "paymentType": "={{ $json.paymentType }}",
+          "merchant": "={{ $json.merchant }}",
+          "amount": "={{ $json.amount }}",
+          "currency": "={{ $json.currency }}",
+          "transactionDate": "={{ $json.transactionDate }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Skip (Not a Bank Email)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 450],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Detect Bank & Parse Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Bank & Parse Email": {
+      "main": [
+        [
+          {
+            "node": "Is Valid Transaction?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid Transaction?": {
+      "main": [
+        [
+          {
+            "node": "POST to Backend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (Not a Bank Email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-f001-4000-8000-000000000000"
+}

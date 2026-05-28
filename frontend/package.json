@@ -1,0 +1,31 @@
+{
+  "name": "ai-wallet-summarizer-frontend",
+  "version": "1.0.0",
+  "description": "AI-Powered Personal Finance Automation Dashboard",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@unovis/ts": "^1.6.5",
+    "@unovis/vue": "^1.6.5",
+    "dayjs": "^1.11.21",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.35",
+    "vue-router": "^5.0.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14",
+    "vue-tsc": "^3.3.2"
+  }
+}

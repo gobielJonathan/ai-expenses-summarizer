@@ -1,0 +1,55 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Transaction {
+  id              String     @id @default(uuid())
+  bankType        String     @map("bank_type")
+  paymentType     String     @map("payment_type")
+  merchant        String
+  amount          Decimal    @db.Decimal(15, 2)
+  currency        String     @default("IDR")
+  transactionDate DateTime   @map("transaction_date")
+  category        String     @default("")
+  subcategory     String     @default("")
+  statementId     String?    @map("statement_id")
+  statement       Statement? @relation(fields: [statementId], references: [id])
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  @@index([transactionDate])
+  @@index([bankType])
+  @@index([paymentType])
+  @@index([category])
+  @@map("transactions")
+}
+
+model Statement {
+  id             String        @id @default(uuid())
+  bankType       String        @map("bank_type")
+  statementMonth DateTime      @db.Date @map("statement_month")
+  pdfPath        String        @map("pdf_path")
+  uploadedAt     DateTime      @default(now()) @map("uploaded_at")
+  transactions   Transaction[]
+
+  @@index([bankType])
+  @@index([statementMonth])
+  @@map("statements")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String   @default("")
+  avatarUrl String   @default("") @map("avatar_url")
+  googleId  String   @unique @map("google_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
