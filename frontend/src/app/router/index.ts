@@ -41,9 +41,9 @@ const router = createRouter({
           component: () => import('@/modules/statements/StatementsView.vue'),
         },
         {
-          path: 'analytics',
-          name: 'analytics',
-          component: () => import('@/modules/analytics/AnalyticsView.vue'),
+          path: 'settings',
+          name: 'settings',
+          component: () => import('@/modules/settings/SettingsView.vue'),
         },
       ],
     },

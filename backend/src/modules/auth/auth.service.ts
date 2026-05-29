@@ -21,8 +21,13 @@ export function getGoogleAuthUrl(): string {
   const client = getOAuthClient()
   return client.generateAuthUrl({
     access_type: 'offline',
-    scope: ['openid', 'email', 'profile'],
-    prompt: 'select_account',
+    scope: [
+      'openid',
+      'email',
+      'profile',
+      'https://www.googleapis.com/auth/gmail.readonly',
+    ],
+    prompt: 'consent',
   })
 }
 
@@ -46,6 +51,7 @@ export async function handleGoogleCallback(code: string): Promise<AuthTokenRespo
     email: payload.email,
     name: payload.name ?? '',
     avatarUrl: payload.picture ?? '',
+    ...(tokens.refresh_token ? { gmailRefreshToken: tokens.refresh_token } : {}),
   })
 
   const token = signToken({ sub: user.id, email: user.email })

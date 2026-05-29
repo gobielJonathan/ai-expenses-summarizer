@@ -23,12 +23,22 @@
           />
         </AppCard>
 
-        <AppCard title="Top Categories (Bar)">
-          <BarChart
-            :data="categoryBarData"
-            :yKeys="['y']"
-            :xTickFormat="(_, i) => store.data!.topCategories[i as number]?.category ?? ''"
+        <AppCard title="Top Categories">
+          <DonutChart
+            :data="categoryDonutData"
+            :height="240"
           />
+          <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1">
+            <div
+              v-for="(item, i) in store.data!.topCategories"
+              :key="item.category"
+              class="flex items-center gap-1.5 text-xs"
+            >
+              <span class="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" :style="{ background: donutColors[i % donutColors.length] }" />
+              <span class="truncate">{{ item.category }}</span>
+              <span class="ml-auto text-gray-500 dark:text-gray-400 flex-shrink-0">{{ formatCurrencyShort(item.amount) }}</span>
+            </div>
+          </div>
         </AppCard>
 
         <AppCard title="Expense by Bank">
@@ -57,6 +67,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner.vue'
 import ErrorMessage from '@/components/ui/ErrorMessage.vue'
 import LineChart from '@/components/charts/LineChart.vue'
 import BarChart from '@/components/charts/BarChart.vue'
+import DonutChart from '@/components/charts/DonutChart.vue'
 
 const store = useDashboardStore()
 
@@ -74,9 +85,17 @@ const monthlyBarData = computed(() =>
   (store.data?.monthly ?? []).map((m) => ({ x: m.month, y: m.amount })),
 )
 
-const categoryBarData = computed(() =>
-  (store.data?.topCategories ?? []).map((c) => ({ x: c.category, y: c.amount })),
+const categoryDonutData = computed(() =>
+  (store.data?.topCategories ?? []).map((c) => ({ label: c.category, value: c.amount })),
 )
+
+const donutColors = ['var(--color-primary)', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316', '#84cc16', '#ec4899', '#14b8a6']
+
+function formatCurrencyShort(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(0)}K`
+  return String(value)
+}
 
 const bankChartData = computed(() =>
   (store.data?.byBank ?? []).map((b) => ({ x: b.bank, debit: b.debit, credit: b.credit })),

@@ -32,5 +32,16 @@ export async function createStatement(data: {
   statementMonth: Date
   pdfPath: string
 }) {
+  // Dedup: return existing statement if same bank + month already present
+  const existing = await prisma.statement.findUnique({
+    where: { bankType_statementMonth: { bankType: data.bankType, statementMonth: data.statementMonth } },
+  })
+  if (existing) return existing
   return prisma.statement.create({ data })
+}
+
+export async function deleteStatement(id: string) {
+  // Delete associated transactions first (no cascade set), then the statement
+  await prisma.transaction.deleteMany({ where: { statementId: id } })
+  return prisma.statement.delete({ where: { id } })
 }

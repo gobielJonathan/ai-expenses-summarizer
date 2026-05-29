@@ -57,7 +57,6 @@ export async function getTopCategories(query: DashboardQuery) {
       ${query.bankType ? Prisma.sql`AND bank_type = ${query.bankType}` : Prisma.sql``}
     GROUP BY category
     ORDER BY total DESC
-    LIMIT 10
   `
   return rows
 }

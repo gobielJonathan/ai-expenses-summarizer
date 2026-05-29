@@ -18,10 +18,26 @@ export async function upsertGoogleUser(data: {
   email: string
   name: string
   avatarUrl: string
+  gmailRefreshToken?: string
 }): Promise<UserRecord> {
+  const updateData: Record<string, unknown> = {
+    email: data.email,
+    name: data.name,
+    avatarUrl: data.avatarUrl,
+  }
+  if (data.gmailRefreshToken) {
+    updateData.gmailRefreshToken = data.gmailRefreshToken
+  }
+
   return prisma.user.upsert({
     where: { googleId: data.googleId },
-    update: { email: data.email, name: data.name, avatarUrl: data.avatarUrl },
-    create: data,
+    update: updateData,
+    create: {
+      googleId: data.googleId,
+      email: data.email,
+      name: data.name,
+      avatarUrl: data.avatarUrl,
+      gmailRefreshToken: data.gmailRefreshToken,
+    },
   })
 }

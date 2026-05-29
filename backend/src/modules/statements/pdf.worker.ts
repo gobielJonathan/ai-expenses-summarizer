@@ -1,10 +1,11 @@
 import fs from 'fs/promises'
-import path from 'path'
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
+const pdfParseModule = require('pdf-parse')
+const pdfParse: (buf: Buffer) => Promise<{ text: string }> = pdfParseModule.default ?? pdfParseModule
 import dayjs from 'dayjs'
 import { Job } from 'bullmq'
-import { createWorker, PdfParsingJobData, enqueueAiCategorization } from '../../infrastructure/queue'
+import { createWorker, PdfParsingJobData, enqueueAiBatch } from '../../infrastructure/queue'
 import { prisma } from '../../infrastructure/database/prisma'
 import { logger } from '../../shared/logger'
 
@@ -60,9 +61,9 @@ export function startPdfWorker() {
 
       logger.info(`Extracted ${txs.length} transactions from statement ${statementId}`)
 
-      for (const tx of txs) {
-        const created = await prisma.transaction.create({
-          data: {
+      if (txs.length > 0) {
+        await prisma.transaction.createMany({
+          data: txs.map((tx) => ({
             bankType,
             paymentType: tx.paymentType,
             merchant: tx.merchant,
@@ -72,15 +73,26 @@ export function startPdfWorker() {
             category: 'Uncategorized',
             subcategory: '',
             statementId,
-          },
+          })),
+          skipDuplicates: true,
         })
 
-        await enqueueAiCategorization({
-          transactionId: created.id,
-          merchant: created.merchant,
-          amount: Number(created.amount),
-          bankType,
+        // createMany on PostgreSQL does not return inserted rows; fetch them by statementId
+        const created = await prisma.transaction.findMany({
+          where: { statementId },
+          select: { id: true, merchant: true, amount: true },
         })
+
+        if (created.length > 0) {
+          await enqueueAiBatch({
+            transactions: created.map((t) => ({
+              transactionId: t.id,
+              merchant: t.merchant,
+              amount: Number(t.amount),
+              bankType,
+            })),
+          })
+        }
       }
 
       logger.info(`Statement ${statementId} processing complete`)

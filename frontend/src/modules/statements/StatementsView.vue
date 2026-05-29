@@ -77,6 +77,7 @@
               :statement="s"
               :onDownload="store.downloadFile"
               :onPreview="store.previewFile"
+              :onDelete="store.deleteStatement"
             />
           </div>
         </div>
@@ -95,6 +96,7 @@
               :statement="s"
               :onDownload="store.downloadFile"
               :onPreview="store.previewFile"
+              :onDelete="store.deleteStatement"
             />
           </div>
         </div>

@@ -49,5 +49,10 @@ export const statementService = {
   previewFile: async (id: string): Promise<string> => {
     return fetchBlob(`${BASE_URL}/statements/${id}/preview`)
   },
+
+  /** Delete a statement and its associated transactions. */
+  delete: async (id: string): Promise<void> => {
+    await http.delete(`/statements/${id}`)
+  },
 }
 

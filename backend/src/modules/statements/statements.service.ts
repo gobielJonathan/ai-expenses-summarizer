@@ -2,7 +2,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import dayjs from 'dayjs'
 import { env } from '../../config/env'
-import { findStatements, findStatementById, createStatement } from './statements.repository'
+import { findStatements, findStatementById, createStatement, deleteStatement } from './statements.repository'
 import { enqueuePdfParsing } from '../../infrastructure/queue'
 import { NotFoundError } from '../../shared/errors'
 import type { UploadStatementDto, ListStatementsQuery } from './statements.schema'
@@ -40,4 +40,12 @@ export async function uploadStatement(dto: UploadStatementDto, fileBuffer: Buffe
   await enqueuePdfParsing({ statementId: statement.id, pdfPath: filePath, bankType: dto.bankType })
 
   return statement
+}
+
+export async function removeStatement(id: string) {
+  const stmt = await findStatementById(id)
+  if (!stmt) throw new NotFoundError('Statement')
+  // Delete PDF file if it exists
+  try { await fs.unlink(stmt.pdfPath) } catch { /* file may not exist, ignore */ }
+  return deleteStatement(id)
 }

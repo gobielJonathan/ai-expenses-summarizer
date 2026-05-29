@@ -4,6 +4,8 @@ import { ValidationError } from '../../shared/errors'
 import { prisma } from '../../infrastructure/database/prisma'
 import { enqueueAiCategorization } from '../../infrastructure/queue'
 import { logger } from '../../shared/logger'
+import { parseEmailWithLlm } from './llm-parser.service'
+import { extractEmailFields } from './email-fields.extractor'
 import type { EmailWebhookDto } from './email.schema'
 
 dayjs.extend(customParseFormat)
@@ -16,39 +18,76 @@ interface ParsedTransaction {
   transactionDate: Date
   paymentType: 'DEBIT' | 'CREDIT'
   currency: string
+  category: string
 }
 
 // ── Per-bank parsers ───────────────────────────────────────────────────────────
 
 /**
- * BCA Debit notification example:
- *   Jenis Transaksi : Pembayaran
- *   Keterangan      : INDOMARET 0123
- *   Nominal         : Rp 50.000
- *   Tanggal         : 27/05/2025 14:23:15 WIB
- *
- * BCA Credit card notification example:
- *   Merchant        : SHOPEE PAYMENT
- *   Jumlah          : Rp 150.000
- *   Tanggal         : 27 Mei 2025
+ * BCA Debit notification — multiple email formats observed:
+ *   Format A (new):
+ *     Nilai Transaksi : Rp50.000
+ *     Nama Merchant   : INDOMARET 0123
+ *     Tanggal         : 27/05/2025 14:23:15 WIB
+ *   Format B (old):
+ *     Nominal         : Rp 50.000
+ *     Keterangan      : INDOMARET 0123
+ *     Tanggal         : 27/05/2025 14:23:15 WIB
+ *   BCA Credit card:
+ *     Jumlah Transaksi : Rp 150.000
+ *     Merchant         : SHOPEE PAYMENT
+ *     Tanggal          : 27 Mei 2025
  */
-function parseBca(body: string, subject: string): ParsedTransaction {
-  const isCredit = /kartu kredit/i.test(body) || /kartu kredit/i.test(subject)
+function parseBca(body: string, subject: string, from: string): ParsedTransaction {
+  // Use sender address as the definitive signal — body may contain "credit card" in footers on debit emails
+  const isCredit = /klikbca\.com/i.test(from)
+    || /kartu kredit/i.test(subject)
+    || /credit card/i.test(subject)
 
-  // Merchant / Keterangan
-  const merchantMatch = body.match(/(?:Keterangan|Merchant)\s*:\s*(.+?)(?:\r?\n|$)/i)
+  // ── English myBCA format (QRIS / Internet Transaction Journal / Transfer / Top Up) ──
+  // HTML table strips to: "LABEL\n\n\n: \n\n\nIDR X"
+  // Amount labels seen: "Total Payment", "Total Amount", "Transfer Amount", "Top Up Amount", "Amount"
+  const enAmountMatch = body.match(
+    /(?:Total\s+(?:Payment|Amount)|Transfer\s+Amount|Top\s+Up\s+Amount|(?<![A-Za-z])Amount)\s+:\s+IDR\s+([\d,]+(?:\.\d+)?)/i,
+  )
+  if (enAmountMatch) {
+    const amount = parseFloat(enAmountMatch[1].replace(/,/g, ''))
+    const merchantMatch = body.match(/(?:Payment\s+to|Beneficiary\s+Name|Transfer\s+to\s+[^\n]+Account)\s+:\s+(.+?)(?:\r?\n|$)/i)
+    const transferTypeMatch = body.match(/Transfer\s+Type\s+:\s+(.+?)(?:\r?\n|$)/i)
+    const merchant = merchantMatch?.[1]?.trim() ?? transferTypeMatch?.[1]?.trim() ?? 'Unknown'
+    const dateMatch = body.match(/Transaction\s+Date\s+:\s+(.+?)(?:\r?\n|$)/i)
+    const transactionDate = parseIndonesianDate(dateMatch?.[1]?.trim() ?? '')
+    return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR', category: 'Uncategorized' }
+  }
+
+  // ── Indonesian format ──
+  // Labels: "Nama Merchant / Keterangan", "Nilai Transaksi / Nominal / Sejumlah", "Tanggal / Pada Tanggal"
+  // Note: BCA credit card emails use multi-line format: LABEL\n:\nVALUE
+  const merchantMatch = body.match(
+    /(?:Nama Merchant|Keterangan|Merchant\s*\/\s*ATM|Merchant|Nama Toko)\s*:\s*(.+?)(?:\r?\n|$)/i,
+  ) ?? body.match(
+    /(?:Nama Merchant|Keterangan|Merchant\s*\/\s*ATM|Merchant|Nama Toko)\r?\n\s*:\s*\r?\n(.+?)(?:\r?\n|$)/i,
+  )
   const merchant = merchantMatch?.[1]?.trim() ?? 'Unknown'
 
-  // Amount — "Rp 50.000" or "Rp50.000,00"
-  const amountMatch = body.match(/(?:Nominal|Jumlah)\s*:\s*Rp\s*([\d.,]+)/i)
-  if (!amountMatch) throw new ValidationError('BCA: cannot parse amount')
+  const amountMatch = body.match(
+    /(?:Nilai Transaksi|Jumlah Transaksi|Sejumlah|Nominal|Jumlah)\s*:\s*Rp\s*([\d.,]+)/i,
+  ) ?? body.match(
+    /(?:Nilai Transaksi|Jumlah Transaksi|Sejumlah|Nominal|Jumlah)\r?\n\s*:\s*\r?\nRp\s*([\d.,]+)/i,
+  )
+  if (!amountMatch) {
+    logger.warn(`BCA parser — cannot parse amount. Subject: "${subject}" | body length: ${body.length} | body:\n${body.slice(0, 600)}`)
+    throw new ValidationError('BCA: cannot parse amount')
+  }
   const amount = parseRupiah(amountMatch[1])
 
-  // Date
-  const dateMatch = body.match(/Tanggal\s*:\s*([\d/]+(?:\s+\w+\s+\d{4})?(?:\s[\d:]+(?:\s+WIB)?)?)/i)
+  // Date: handles "Tanggal : DD/MM/YYYY", "Pada Tanggal\n:\nDD-MM-YYYY HH:mm:ss WIB", and "Tanggal : 27 Mei 2025"
+  const datePattern = /([\d][\d/\-]+(?:\s+\w+\s+\d{4})?(?:\s[\d:]+(?:\s+WIB)?)?)/i
+  const dateMatch = body.match(new RegExp(`(?:Pada\\s+)?Tanggal\\s*:\\s*${datePattern.source}`, 'i'))
+    ?? body.match(new RegExp(`(?:Pada\\s+)?Tanggal\\r?\\n\\s*:\\s*\\r?\\n${datePattern.source}`, 'i'))
   const transactionDate = parseIndonesianDate(dateMatch?.[1]?.trim() ?? '')
 
-  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR' }
+  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR', category: 'Uncategorized' }
 }
 
 /**
@@ -71,7 +110,7 @@ function parseJenius(body: string): ParsedTransaction {
 
   const isCredit = /kredit|credit/i.test(body)
 
-  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR' }
+  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR', category: 'Uncategorized' }
 }
 
 /**
@@ -94,7 +133,7 @@ function parseUob(body: string): ParsedTransaction {
 
   const isCredit = /credit card|credit/i.test(body)
 
-  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR' }
+  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR', category: 'Uncategorized' }
 }
 
 /**
@@ -116,7 +155,7 @@ function parseBri(body: string, subject: string): ParsedTransaction {
 
   const isCredit = /kredit|credit card/i.test(body) || /kredit|credit card/i.test(subject)
 
-  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR' }
+  return { merchant, amount, transactionDate, paymentType: isCredit ? 'CREDIT' : 'DEBIT', currency: 'IDR', category: 'Uncategorized' }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -133,8 +172,10 @@ const ID_MONTHS: Record<string, string> = {
 function parseIndonesianDate(raw: string): Date {
   if (!raw) return new Date()
 
-  // Normalise Indonesian month names → numbers
-  const normalised = raw.toLowerCase().replace(
+  // Normalise Indonesian month names → numbers; strip timezone labels
+  const normalised = raw.toLowerCase()
+    .replace(/\s+(?:wib|wita|wit)\s*$/, '')
+    .replace(
     /\b(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/g,
     (m) => ID_MONTHS[m] ?? m,
   )
@@ -142,7 +183,7 @@ function parseIndonesianDate(raw: string): Date {
   const formats = [
     'DD/MM/YYYY HH:mm:ss', 'DD/MM/YYYY HH:mm', 'DD/MM/YYYY',
     'DD-MM-YYYY HH:mm:ss', 'DD-MM-YYYY HH:mm', 'DD-MM-YYYY',
-    'DD MM YYYY HH:mm', 'DD MM YYYY',
+    'DD MM YYYY HH:mm:ss', 'DD MM YYYY HH:mm', 'DD MM YYYY',
     'YYYY-MM-DD',
   ]
 
@@ -168,15 +209,57 @@ function parseRupiah(raw: string): number {
 
 export function parseEmailTransaction(dto: EmailWebhookDto): ParsedTransaction {
   switch (dto.bankType) {
-    case 'BCA':    return parseBca(dto.body, dto.subject)
+    case 'BCA':    return parseBca(dto.body, dto.subject, dto.from)
     case 'JENIUS': return parseJenius(dto.body)
     case 'UOB':    return parseUob(dto.body)
     case 'BRI':    return parseBri(dto.body, dto.subject)
   }
 }
 
+/** Determine CREDIT vs DEBIT from email metadata before body parsing */
+function detectIsCredit(dto: EmailWebhookDto): boolean {
+  if (dto.bankType === 'BCA') {
+    return /klikbca\.com/i.test(dto.from)
+      || /kartu kredit/i.test(dto.subject)
+      || /credit card/i.test(dto.subject)
+  }
+  return false
+}
+
 export async function processEmailTransaction(dto: EmailWebhookDto) {
-  const parsed = parseEmailTransaction(dto)
+  // Dedup: skip if this message was already processed
+  if (dto.messageId) {
+    const existing = await prisma.transaction.findFirst({
+      where: { sourceMessageId: dto.messageId },
+      select: { id: true },
+    })
+    if (existing) {
+      logger.debug(`Email transaction already exists for messageId ${dto.messageId} — skipping`)
+      return existing
+    }
+  }
+
+  // 1. Extract compact fields and try LLM parser — falls back to null if unavailable
+  const isCredit = detectIsCredit(dto)
+  const fields = extractEmailFields(dto)
+  logger.debug(`Email fields extracted for ${dto.bankType}: ${JSON.stringify(fields)}`)
+  const llmResult = await parseEmailWithLlm(fields, dto.bankType, isCredit)
+
+  let parsed: ParsedTransaction
+  if (llmResult) {
+    parsed = {
+      merchant: llmResult.merchant,
+      amount: llmResult.amount,
+      transactionDate: new Date(llmResult.transactionDate),
+      paymentType: llmResult.paymentType,
+      currency: llmResult.currency,
+      category: llmResult.category,
+    }
+  } else {
+    // 2. Fallback: per-bank regex parsers
+    logger.debug(`LLM parser returned null for ${dto.bankType} — using regex fallback`)
+    parsed = parseEmailTransaction(dto)
+  }
 
   const transaction = await prisma.transaction.create({
     data: {
@@ -186,17 +269,11 @@ export async function processEmailTransaction(dto: EmailWebhookDto) {
       amount: parsed.amount,
       currency: parsed.currency,
       transactionDate: parsed.transactionDate,
-      category: 'Uncategorized',
+      category: parsed.category,
       subcategory: '',
       statementId: null,
+      sourceMessageId: dto.messageId ?? null,
     },
-  })
-
-  await enqueueAiCategorization({
-    transactionId: transaction.id,
-    merchant: transaction.merchant,
-    amount: Number(transaction.amount),
-    bankType: transaction.bankType,
   })
 
   logger.info(`Email transaction created: ${transaction.id} (${transaction.merchant} – ${transaction.bankType})`)

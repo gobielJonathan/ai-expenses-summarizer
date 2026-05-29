@@ -65,5 +65,10 @@ export const useStatementStore = defineStore('statements', () => {
     return statementService.previewFile(id)
   }
 
-  return { statements, loading, error, uploading, uploadError, groupedByBank, groupedByMonth, fetch, upload, downloadFile, previewFile }
+  async function deleteStatement(id: string) {
+    await statementService.delete(id)
+    statements.value = statements.value.filter((s) => s.id !== id)
+  }
+
+  return { statements, loading, error, uploading, uploadError, groupedByBank, groupedByMonth, fetch, upload, downloadFile, previewFile, deleteStatement }
 })

@@ -2,7 +2,7 @@
 
 # AI-Powered Personal Finance Automation System
 
-Version: 3.1
+Version: 3.2
 Status: Draft
 Deployment: Self-hosted VPS
 Architecture: Monorepo
@@ -62,11 +62,13 @@ No hardcoded category mapping.
 
 ## Financial Analytics Dashboard
 
+Analytics charts are embedded directly in the Dashboard page.
+
 User can view:
 
 * monthly expense chart
 * daily expense chart
-* top 5 expense categories
+* top categories
 * expense by bank
 * expense by payment type
 * transaction history
@@ -188,7 +190,6 @@ Reason:
 │   │   ├── dashboard
 │   │   ├── transactions
 │   │   ├── statements
-│   │   ├── analytics
 │   │   └── auth
 │   │
 │   ├── components
@@ -342,7 +343,7 @@ Supported:
 | Database       | PostgreSQL    |
 | Validation     | Zod           |
 | Auth           | Google SSO (OAuth 2.0) + JWT |
-| AI Integration | Gemini API    |
+| AI Integration | Ollama (local LLM) |
 | Queue          | BullMQ        |
 | Cache          | Redis         |
 
@@ -761,7 +762,7 @@ n8n
 Gmail API
 
 AI:
-Gemini Flash
+Ollama / Llama 3.2 3B
 ```
 
 ---
@@ -790,3 +791,679 @@ This architecture is:
 * VPS friendly
 * production ready
 * low operational cost
+
+---
+
+# 15. PRD Update v3.2 — WhatsApp Conversational Assistant via n8n
+
+---
+
+# WhatsApp Integration
+
+## Goal
+
+Allow users to interact with the finance system using WhatsApp.
+
+Users can send messages to a WhatsApp Business number and receive personalized expense information generated from their own financial data.
+
+---
+
+# Architecture Decision
+
+## Core Processing
+
+The following remain inside Express.js:
+
+* Authentication
+* User Management
+* Gmail Synchronization
+* Transaction Parsing
+* Statement Parsing
+* AI Categorization
+* Dashboard APIs
+* Analytics Engine
+
+---
+
+## Conversational Layer
+
+The following are handled by n8n:
+
+* WhatsApp Cloud API webhook
+* Incoming message processing
+* Intent routing
+* Calling backend APIs
+* Formatting responses
+* Sending WhatsApp replies
+
+---
+
+# Updated High-Level Architecture
+
+```text
+WhatsApp User
+        ↓
+Meta WhatsApp Cloud API
+        ↓
+n8n Workflow
+        ↓
+Express API
+        ↓
+PostgreSQL
+        ↓
+Analytics Engine
+        ↓
+Response
+        ↓
+n8n
+        ↓
+WhatsApp Reply
+```
+
+---
+
+# User Linking
+
+## Requirement
+
+Each WhatsApp number must be linked to a system account.
+
+---
+
+## Data Isolation
+
+Each user can only access their own expense data.
+
+The following rules MUST be enforced:
+
+* A WhatsApp number can only be linked to ONE user account
+* Only verified numbers can query expense data
+* n8n MUST verify the sender phone number before calling any `/chat/*` endpoint
+* If the number is not linked or not verified → send a rejection message back to the user
+* Under no circumstances should one user's data be returned to another user's WhatsApp number
+
+n8n verification flow:
+
+```text
+WhatsApp Message arrives
+        ↓
+n8n calls GET /whatsapp/lookup?phoneNumber=+628xx
+        ↓
+Backend checks whatsapp_accounts for verified match
+        ↓
+If NOT found or NOT verified → n8n replies "Please link your number at {FRONTEND_URL}/settings"
+        ↓
+If verified → n8n calls /chat/* with X-Phone-Number header
+        ↓
+Backend re-validates X-Phone-Number on every /chat/* request
+        ↓
+Returns data only for the verified owner
+```
+
+The `/whatsapp/lookup` endpoint is protected by `X-Webhook-Secret` (not JWT) so n8n can call it server-to-server.
+
+The `/chat/*` endpoints accept two auth methods:
+* `Authorization: Bearer <jwt>` — for frontend (dashboard)
+* `X-Phone-Number` + `X-Webhook-Secret` headers — for n8n WhatsApp calls
+
+---
+
+## whatsapp_accounts
+
+| Column       | Type      |
+| ------------ | --------- |
+| id           | UUID      |
+| user_id      | UUID      |
+| phone_number | varchar   |
+| is_verified  | boolean   |
+| created_at   | timestamp |
+
+---
+
+# WhatsApp Account Linking Flow
+
+```text
+User Login
+    ↓
+Profile Settings
+    ↓
+Link WhatsApp Number
+    ↓
+OTP Verification
+    ↓
+Store WhatsApp Number
+```
+
+---
+
+# Conversational Use Cases
+
+## Expense Summary
+
+User:
+
+```text
+summary
+```
+
+Response:
+
+```text
+Today's Expenses
+
+Total:
+Rp 285,000
+
+Top Categories:
+1. Food Rp 120,000
+2. Transportation Rp 90,000
+3. Shopping Rp 75,000
+```
+
+---
+
+## Monthly Summary
+
+User:
+
+```text
+monthly summary
+```
+
+Response:
+
+```text
+May 2026
+
+Total Spending:
+Rp 8,520,000
+
+Top Categories:
+1. Shopping
+2. Food
+3. Transportation
+
+Payment Type:
+Credit 70%
+Debit 30%
+```
+
+---
+
+## Category Breakdown
+
+User:
+
+```text
+food expenses this month
+```
+
+Response:
+
+```text
+Food Expenses
+
+Total:
+Rp 1,250,000
+
+Top Merchants:
+- Starbucks
+- McDonald's
+- Sushi Tei
+```
+
+---
+
+## Expense by Bank
+
+User:
+
+```text
+expenses by bank
+```
+
+Response:
+
+```text
+BCA:
+Rp 3,500,000
+
+Jenius:
+Rp 2,100,000
+
+UOB:
+Rp 1,800,000
+
+BRI:
+Rp 900,000
+```
+
+---
+
+## Expense by Payment Type
+
+User:
+
+```text
+credit card expenses
+```
+
+Response:
+
+```text
+Credit Card Spending
+
+Total:
+Rp 5,600,000
+
+Top Categories:
+- Shopping
+- Travel
+- Food
+```
+
+---
+
+## Statement Lookup
+
+User:
+
+```text
+show my May 2026 BCA statement
+```
+
+Response:
+
+```text
+Statement Found
+
+Bank:
+BCA
+
+Month:
+May 2026
+
+Download:
+https://...
+```
+
+---
+
+# AI Chat Assistant
+
+## Goal
+
+Allow natural language financial questions.
+
+Examples:
+
+```text
+How much did I spend on fuel this month?
+```
+
+```text
+Which bank do I use the most?
+```
+
+```text
+What was my largest expense last month?
+```
+
+```text
+Compare April and May spending.
+```
+
+---
+
+# AI Query Flow
+
+```text
+WhatsApp Message
+      ↓
+n8n
+      ↓
+Intent Detection
+      ↓
+Backend Query
+      ↓
+Analytics Service
+      ↓
+LLM Response Generation
+      ↓
+WhatsApp Reply
+```
+
+---
+
+# Required Backend APIs
+
+## GET /chat/summary
+
+Returns:
+
+```json
+{
+  "total": 285000,
+  "categories": [...]
+}
+```
+
+---
+
+## GET /chat/monthly-summary
+
+Returns monthly analytics.
+
+---
+
+## GET /chat/category-summary
+
+Returns category breakdown.
+
+---
+
+## GET /chat/bank-summary
+
+Returns spending grouped by bank.
+
+---
+
+## GET /chat/payment-summary
+
+Returns spending grouped by payment type.
+
+---
+
+## GET /chat/statement
+
+Returns statement metadata and PDF URL.
+
+---
+
+# n8n Responsibilities
+
+## Incoming
+
+* Receive WhatsApp webhooks
+* Parse user messages
+* Authenticate sender
+* Call backend APIs
+
+---
+
+## Outgoing
+
+* Format responses
+* Send WhatsApp messages
+* Handle errors
+* Handle retries
+
+---
+
+# Meta WhatsApp Cloud API
+
+## Integration Method
+
+Use:
+
+```text
+Meta WhatsApp Cloud API
+```
+
+connected to:
+
+```text
+n8n WhatsApp Node
+```
+
+---
+
+# MVP Commands
+
+Supported commands:
+
+```text
+summary
+```
+
+```text
+monthly summary
+```
+
+```text
+top categories
+```
+
+```text
+expenses by bank
+```
+
+```text
+credit expenses
+```
+
+```text
+debit expenses
+```
+
+```text
+show statements
+```
+
+---
+
+# Future Features
+
+## AI Financial Advisor
+
+Examples:
+
+```text
+How can I reduce my expenses?
+```
+
+```text
+Why is my spending increasing?
+```
+
+```text
+What category should I optimize?
+```
+
+---
+
+# Final Architecture Recommendation (v3.2)
+
+```text
+Vue Dashboard
+        ↓
+Google SSO
+        ↓
+Express API
+        ↓
+PostgreSQL
+        ↓
+Cron Gmail Sync
+        ↓
+AI Categorization
+
+WhatsApp Layer
+        ↓
+Meta WhatsApp Cloud API
+        ↓
+n8n
+        ↓
+Express Analytics APIs
+```
+
+n8n is approved only for:
+
+* WhatsApp integration
+* conversational workflows
+* notification delivery
+
+Core business logic remains inside Express.js.
+
+---
+
+# 16. PRD Update v3.3 — Local LLM Email Parsing via Ollama
+
+---
+
+## Goal
+
+Replace fragile, hand-maintained bank-specific regex parsers with a local LLM that
+understands natural language email bodies and extracts structured transaction data
+without any code changes when email formats change.
+
+---
+
+## Problem with Regex Parsers
+
+* Breaks silently when banks change email templates
+* One parser per bank — grows linearly with new banks
+* Multi-line, table-based HTML bodies require complex strip/regex chains
+* WIB/WITA timezone suffixes, Indonesian month names, mixed Rp / IDR formats
+  all require separate normalisation layers
+
+---
+
+## Solution: Local LLM via Ollama
+
+Use **Llama 3.2 3B** running locally via **Ollama** to parse email bodies.
+The model runs inside Docker on the VPS — no external API, no cost, no quota.
+
+---
+
+## What LLM Extracts
+
+| Field             | Type                    | Example                    |
+| ----------------- | ----------------------- | -------------------------- |
+| merchant          | string                  | `NANO HEALTHY FAMILY`      |
+| amount            | number                  | `370000`                   |
+| transactionDate   | ISO 8601 string         | `2026-05-01T15:28:14`      |
+| paymentType       | `DEBIT` \| `CREDIT`     | `CREDIT`                   |
+| currency          | string                  | `IDR`                      |
+
+---
+
+## Fallback Strategy
+
+```text
+Email Body
+      ↓
+LLM Parser (Ollama / Llama 3.2 3B)   ← primary
+      ↓ if unavailable or invalid JSON
+Regex Fallback (per-bank parsers)     ← secondary
+      ↓
+ParsedTransaction
+```
+
+The existing per-bank regex parsers (`parseBca`, `parseJenius`, `parseUob`, `parseBri`)
+are kept as fallback. If Ollama is down, parsing continues without interruption.
+
+---
+
+## Infrastructure
+
+### Ollama Docker Service
+
+```yaml
+ollama:
+  image: ollama/ollama
+  volumes:
+    - ollama-data:/root/.ollama
+  restart: unless-stopped
+```
+
+### Model Pull (one-shot init container)
+
+```yaml
+ollama-init:
+  image: ollama/ollama
+  depends_on:
+    ollama:
+      condition: service_healthy
+  entrypoint: ["ollama", "pull", "llama3.2:3b"]
+  environment:
+    OLLAMA_HOST: http://ollama:11434
+```
+
+### Manual Setup (outside Docker)
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull model
+ollama pull llama3.2:3b
+
+# Start server
+ollama serve
+```
+
+---
+
+## Backend Changes
+
+### New env vars
+
+| Variable      | Default                    | Description                     |
+| ------------- | -------------------------- | ------------------------------- |
+| OLLAMA_URL    | `http://ollama:11434`      | Ollama server base URL          |
+| OLLAMA_MODEL  | `llama3.2:3b`              | Model name to use for parsing   |
+
+### New file: `backend/src/modules/gmail/llm-parser.service.ts`
+
+* Calls `POST {OLLAMA_URL}/api/generate` with `format: "json"` and `stream: false`
+* Prompt instructs the model to return a JSON object with the 5 fields above
+* Timeout: 45 s (3B model on CPU)
+* Returns `LlmParsedTransaction | null` — null on any error, timeout, or invalid output
+
+### Updated: `backend/src/modules/gmail/email.service.ts`
+
+* `processEmailTransaction()` now tries LLM parser first
+* Falls back to existing `parseEmailTransaction()` regex dispatcher if LLM returns null
+
+---
+
+## VPS Requirements (updated)
+
+Running Llama 3.2 3B on CPU requires additional RAM.
+
+| Resource | Previous MVP | With Ollama  |
+| -------- | ------------ | ------------ |
+| CPU      | 2 vCPU       | 4 vCPU       |
+| RAM      | 4 GB         | 8 GB         |
+| Storage  | 40 GB SSD    | 60 GB SSD    |
+
+Llama 3.2 3B model size: ~2 GB. Inference on CPU: 2–10 s per email.
+
+---
+
+## Updated Final Stack
+
+```text
+Frontend:
+Vue.js
+Tailwind CSS v4
+Unovis Charts
+
+Backend:
+Express.js
+Prisma
+PostgreSQL
+
+Email Parsing:
+Ollama (local LLM)
+Llama 3.2 3B
+↓ fallback ↓
+Per-bank regex parsers
+
+Automation:
+n8n
+Gmail API
+
+AI Categorization:
+Ollama / Llama 3.2 3B
+```

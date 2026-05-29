@@ -41,17 +41,21 @@ Banks: BCA, Jenius, UOB, BRI · Payment types: Debit, Credit · Deployment: Dock
 | `GOOGLE_REDIRECT_URI`  | no       | `http://localhost:3000/api/v1/auth/google/callback` |
 | `FRONTEND_URL`         | no       | `http://localhost:5173`             |
 | `STATEMENTS_DIR`       | no       | `./storage/statements`              |
+| `N8N_WEBHOOK_SECRET`   | yes      | Shared secret for n8n → backend calls |
+| `WHATSAPP_PHONE_ID`    | no       | Meta WhatsApp Cloud API phone number ID |
+| `GMAIL_DAILY_SCHEDULE`   | no     | Daily notification cron, default `*/5 * * * *` |
+| `GMAIL_MONTHLY_SCHEDULE` | no     | Monthly e-statement cron, default `0 8 * * *`  |
 
 ### Commands
 
 ```bash
 nvm use 20                                     # always use Node 20
-cd backend && npm run dev                      # dev server (port 3000)
-cd backend && npm run build                    # production build → dist/
+cd backend && pnpm dev                         # dev server (port 3000)
+cd backend && pnpm build                       # production build → dist/
 cd backend && node_modules/.bin/tsc --noEmit   # type-check
-cd backend && npm run db:migrate               # run migrations
-cd backend && npm run db:generate              # regenerate Prisma client
-cd backend && npm run db:studio                # Prisma GUI
+cd backend && pnpm db:migrate                  # run migrations
+cd backend && pnpm db:generate                 # regenerate Prisma client
+cd backend && pnpm db:studio                   # Prisma GUI
 ```
 
 ### Architecture
@@ -90,7 +94,9 @@ backend/src/
 │   ├── statements/                      # GET/POST /statements; pdf.worker.ts (BullMQ)
 │   ├── dashboard/                       # GET /dashboard/summary|monthly|daily|top-categories|banks|bank-payments|payment-types
 │   ├── analytics/                       # GET /analytics/trend|categories|merchants|payment-types
-│   └── ai/                              # GET /ai/summary; ai.worker.ts (BullMQ)
+│   ├── ai/                              # GET /ai/summary; ai.worker.ts (BullMQ)
+│   ├── chat/                            # GET /chat/summary|monthly-summary|category-summary|bank-summary|payment-summary|statement
+│   └── whatsapp/                        # GET /whatsapp/status|lookup; POST /link|verify; DELETE /unlink
 ├── routes/index.ts                      # Mounts all modules under /api/v1
 ├── app.ts                               # Express setup: helmet, cors, morgan, routes, error handling
 └── server.ts                            # Entry: connects DB, starts workers, listens on PORT
@@ -100,10 +106,12 @@ Each module follows: `*.schema.ts` · `*.repository.ts` · `*.service.ts` · `*.
 
 ### Background Workers
 
-| Worker       | Queue                | Trigger          | Action                                              |
-| ------------ | -------------------- | ---------------- | --------------------------------------------------- |
-| `pdf.worker` | `pdf-parsing`        | Statement upload | Extracts PDF text, inserts transactions, enqueues AI |
-| `ai.worker`  | `ai-categorization`  | Per transaction  | Calls Gemini, updates category in DB                |
+| Worker         | Queue / Schedule         | Trigger          | Action                                              |
+| -------------- | ------------------------ | ---------------- | --------------------------------------------------- |
+| `pdf.worker`   | `pdf-parsing` (BullMQ)   | Statement upload | Extracts PDF text, inserts transactions, enqueues AI |
+| `ai.worker`    | `ai-categorization` (BullMQ) | Per transaction  | Calls Gemini, updates category in DB            |
+| `gmail.cron` (daily) | `*/5 * * * *` (node-cron) | Schedule | Fetches today's BCA/Jenius debit+credit notifications per user |
+| `gmail.cron` (monthly) | `0 8 * * *` (node-cron) | Schedule | Fetches this month's e-statement PDFs per user, saves + enqueues PDF parse |
 
 ### API Reference
 
@@ -131,7 +139,19 @@ Base: `/api/v1` · Auth required on all routes except `/auth/*` · Header: `Auth
 | GET    | /analytics/merchants       | query: `startDate, endDate, bankType?, groupBy`                    | Top 20 merchants              |
 | GET    | /analytics/payment-types   | query: `startDate, endDate, bankType?, groupBy`                    | Payment type aggregation      |
 | POST   | /email/webhook             | header: `X-Webhook-Secret`; body: `{ messageId, subject, from, body, bankType, receivedAt? }` | Parse email → create transaction + enqueue AI |
+| POST   | /gmail/sync/daily          | header: Bearer token                                               | Manually trigger today's notification sync for all users |
+| POST   | /gmail/sync/monthly        | header: Bearer token                                               | Manually trigger this month's e-statement sync for all users |
 | GET    | /ai/summary                | query: `startDate?, endDate?`                                      | AI prose spending summary     |
+| GET    | /chat/summary              | query: `startDate?, endDate?, bankType?`                           | Today's total + top 5 categories |
+| GET    | /chat/monthly-summary      | query: `startDate?, endDate?, bankType?`                           | Monthly total + categories + payment split |
+| GET    | /chat/category-summary     | query: `category, startDate?, endDate?, bankType?`                 | Category total + top merchants |
+| GET    | /chat/bank-summary         | query: `startDate?, endDate?`                                      | Spending grouped by bank      |
+| GET    | /chat/payment-summary      | query: `startDate?, endDate?, bankType?`                           | Spending by payment type      |
+| GET    | /chat/statement            | query: `bankType, month (YYYY-MM)`                                 | Statement metadata + download URL |
+| GET    | /whatsapp/status           | header: Bearer token                                               | Current user's linked number  |
+| POST   | /whatsapp/link             | body: `{ phoneNumber }`                                            | Initiate phone link (sends OTP via log) |
+| POST   | /whatsapp/verify           | body: `{ phoneNumber, otp }`                                       | Confirm OTP → mark verified   |
+| DELETE | /whatsapp/unlink           | header: Bearer token                                               | Remove linked number          |
 | GET    | /health                    |                                                                    | `{ status: "ok" }`            |
 
 **Response envelope:**
@@ -172,11 +192,25 @@ model Statement {
 }
 
 model User {
-  id        String
-  email     String   @unique
-  password  String
-  createdAt DateTime @map("created_at")
+  id               String            @id @default(uuid())
+  email            String            @unique
+  name             String            @default("")
+  avatarUrl        String            @default("") @map("avatar_url")
+  googleId         String            @unique @map("google_id")
+  gmailRefreshToken String?          @map("gmail_refresh_token")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  whatsappAccounts WhatsappAccount[]
   @@map("users")
+}
+
+model WhatsappAccount {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id") @unique
+  phoneNumber String   @map("phone_number") @db.VarChar(20)
+  isVerified  Boolean  @default(false) @map("is_verified")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("whatsapp_accounts")
 }
 ```
 
@@ -264,12 +298,22 @@ Visit `http://localhost:5173`.
 ## Docker
 
 ```bash
-docker compose up -d              # start all services
-docker compose down               # stop
-docker compose logs -f backend    # tail logs
+docker compose up -d                                 # start all services
+docker compose down                                  # stop
+docker compose logs -f backend                       # tail backend logs
+docker compose up -d --build backend                 # rebuild + restart backend
+docker compose up -d --build frontend                # rebuild + restart frontend
+
+# n8n workflow management
+docker cp n8n/workflows/. ai-wallet-summarizer-n8n-1:/tmp/workflows/
+docker compose exec -T n8n n8n import:workflow --input=/tmp/workflows/<name>.json
+
+# Prisma inside container
+docker compose exec backend npx prisma db push
+docker compose exec backend npx prisma generate
 ```
 
-Services: `nginx` (80/443) · `frontend` · `backend` (3000) · `postgres` · `redis` · `n8n`
+Services: `nginx` (80/443) · `frontend` · `backend` (3000) · `postgres` · `redis` · `n8n` (5678)
 
 ---
 
@@ -281,5 +325,9 @@ Services: `nginx` (80/443) · `frontend` · `backend` (3000) · `postgres` · `r
 | n8n automation workflows                          | Done    |
 | Email transaction parsing                         | Done    |
 | Statement upload UI                               | Done    |
+| WhatsApp chat module (/chat/* APIs)               | Done    |
+| WhatsApp account linking module (/whatsapp/*)     | Done    |
+| whatsapp_accounts table                           | Done    |
 | AI summary widget in dashboard                    | Pending |
-| Delete `frontend/src/services/mock-data.ts`       | Cleanup |
+| WhatsApp OTP delivery (prod: Meta Cloud API)      | Pending |
+| Cron Gmail Sync                                   | Done    |

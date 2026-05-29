@@ -24,6 +24,34 @@ services:
     networks:
       - app-network
 
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  ollama-init:
+    image: ollama/ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["ollama", "pull", "llama3.2:3b"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: "no"
+    networks:
+      - app-network
+
   backend:
     build:
       context: ./backend
@@ -37,7 +65,6 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY is required}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID is required}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET is required}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-https://yourdomain.com/api/v1/auth/google/callback}
@@ -45,6 +72,8 @@ services:
       STATEMENTS_DIR: /app/storage/statements
       N8N_API_KEY: ${N8N_API_KEY:-}
       N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
     volumes:
       - statements:/app/storage/statements
     depends_on:
@@ -105,6 +134,9 @@ services:
       DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       N8N_API_KEY: ${N8N_API_KEY:-}
       BACKEND_URL: http://backend:3000
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      WHATSAPP_PHONE_ID: ${WHATSAPP_PHONE_ID:-}
     volumes:
       - n8n-data:/home/node/.n8n
     depends_on:
@@ -119,6 +151,7 @@ volumes:
   redis-data:
   n8n-data:
   statements:
+  ollama-data:
 
 networks:
   app-network:

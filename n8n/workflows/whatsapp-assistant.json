@@ -1,0 +1,481 @@
+{
+  "name": "WhatsApp Finance Assistant",
+  "id": "a1b2c3d4-e5f6-4000-8000-000000000001",
+  "versionId": "a1b2c3d4-e5f6-4000-8000-000000000000",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "wa-0001-4000-8000-000000000001",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "parameters": {
+        "path": "whatsapp-assistant",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "wa-0002-4000-8000-000000000002",
+      "name": "Extract Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300],
+      "parameters": {
+        "jsCode": "// Handle Meta WhatsApp Cloud API webhook verification and messages\nconst body = $input.first().json.body;\n\n// Webhook verification challenge\nif ($input.first().json.query?.['hub.mode'] === 'subscribe') {\n  return [{ json: { isVerification: true, challenge: $input.first().json.query['hub.challenge'] } }];\n}\n\n// Extract message from Meta Cloud API payload\nconst entry = body?.entry?.[0];\nconst change = entry?.changes?.[0];\nconst message = change?.value?.messages?.[0];\n\nif (!message) {\n  return [{ json: { skip: true } }];\n}\n\nconst phone = message.from; // e.g. '628123456789'\nconst text = message.text?.body?.trim().toLowerCase() ?? '';\nconst messageId = message.id;\nconst businessPhone = change?.value?.metadata?.display_phone_number ?? '';\n\nreturn [{ json: { phone, text, messageId, businessPhone, skip: false, isVerification: false } }];\n"
+      }
+    },
+    {
+      "id": "wa-0003-4000-8000-000000000003",
+      "name": "Webhook Verification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "cond-verify",
+              "leftValue": "={{ $json.isVerification }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wa-0004-4000-8000-000000000004",
+      "name": "Respond With Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1000, 150],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.challenge }}",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "wa-0005-4000-8000-000000000005",
+      "name": "Skip Empty?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "cond-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wa-0006-4000-8000-000000000006",
+      "name": "Verify Phone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 500],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/v1/whatsapp/lookup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Webhook-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "phoneNumber", "value": "={{ '+' + $json.phone }}" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "responseFormat": "json" } }
+        }
+      }
+    },
+    {
+      "id": "wa-0007-4000-8000-000000000007",
+      "name": "Is Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1500, 500],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "cond-auth",
+              "leftValue": "={{ $json.data.authorized }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wa-0008-4000-8000-000000000008",
+      "name": "Send Unauthorized Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1750, 350],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Meta WhatsApp API"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.WHATSAPP_PHONE_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('Extract Message').item.json.phone }}\",\n  \"type\": \"text\",\n  \"text\": { \"body\": \"Your number is not linked to any account. Please visit {{ $env.FRONTEND_URL }}/settings to link your WhatsApp number.\" }\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "wa-0009-4000-8000-000000000009",
+      "name": "Detect Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 650],
+      "parameters": {
+        "jsCode": "const text = $('Extract Message').item.json.text;\nconst phone = $('Extract Message').item.json.phone;\n\nlet intent = 'unknown';\nlet category = '';\n\nif (/^(summary|pengeluaran hari ini|today)/.test(text)) intent = 'summary';\nelse if (/monthly|bulanan/.test(text)) intent = 'monthly_summary';\nelse if (/bank/.test(text)) intent = 'bank_summary';\nelse if (/payment type|credit|debit/.test(text)) intent = 'payment_summary';\nelse if (/statement/.test(text)) intent = 'statement';\nelse if (/top categor|kategori/.test(text)) intent = 'monthly_summary';\nelse {\n  // Try to detect category query e.g. \"food expenses\" or \"transport this month\"\n  const categoryMatch = text.match(/^([a-z\\s]+?)\\s+(expense|pengeluaran|spending)/);\n  if (categoryMatch) {\n    intent = 'category_summary';\n    category = categoryMatch[1].trim();\n  }\n}\n\nreturn [{ json: { intent, category, phone: '+' + phone } }];\n"
+      }
+    },
+    {
+      "id": "wa-000a-4000-8000-00000000000a",
+      "name": "Route Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2000, 650],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            { "conditions": { "options": {}, "conditions": [{ "id": "r1", "leftValue": "={{ $json.intent }}", "rightValue": "summary", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "summary" },
+            { "conditions": { "options": {}, "conditions": [{ "id": "r2", "leftValue": "={{ $json.intent }}", "rightValue": "monthly_summary", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "monthly" },
+            { "conditions": { "options": {}, "conditions": [{ "id": "r3", "leftValue": "={{ $json.intent }}", "rightValue": "category_summary", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "category" },
+            { "conditions": { "options": {}, "conditions": [{ "id": "r4", "leftValue": "={{ $json.intent }}", "rightValue": "bank_summary", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "bank" },
+            { "conditions": { "options": {}, "conditions": [{ "id": "r5", "leftValue": "={{ $json.intent }}", "rightValue": "payment_summary", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "payment" }
+          ]
+        },
+        "fallbackOutput": "extra"
+      }
+    },
+    {
+      "id": "wa-000b-4000-8000-00000000000b",
+      "name": "Get Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 400],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/v1/chat/summary",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Webhook-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "X-Phone-Number", "value": "={{ $('Detect Intent').item.json.phone }}" }
+          ]
+        },
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      }
+    },
+    {
+      "id": "wa-000c-4000-8000-00000000000c",
+      "name": "Get Monthly Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 550],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/v1/chat/monthly-summary",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Webhook-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "X-Phone-Number", "value": "={{ $('Detect Intent').item.json.phone }}" }
+          ]
+        },
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      }
+    },
+    {
+      "id": "wa-000d-4000-8000-00000000000d",
+      "name": "Get Category Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 700],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/v1/chat/category-summary",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Webhook-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "X-Phone-Number", "value": "={{ $('Detect Intent').item.json.phone }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "category", "value": "={{ $('Detect Intent').item.json.category }}" }
+          ]
+        },
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      }
+    },
+    {
+      "id": "wa-000e-4000-8000-00000000000e",
+      "name": "Get Bank Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 850],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/v1/chat/bank-summary",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Webhook-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "X-Phone-Number", "value": "={{ $('Detect Intent').item.json.phone }}" }
+          ]
+        },
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      }
+    },
+    {
+      "id": "wa-000f-4000-8000-00000000000f",
+      "name": "Get Payment Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 1000],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/v1/chat/payment-summary",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Webhook-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "X-Phone-Number", "value": "={{ $('Detect Intent').item.json.phone }}" }
+          ]
+        },
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      }
+    },
+    {
+      "id": "wa-0010-4000-8000-000000000010",
+      "name": "Format Summary Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 400],
+      "parameters": {
+        "jsCode": "const d = $input.first().json.data;\nfunction rp(n) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n || 0); }\nconst cats = (d.categories || []).slice(0, 5).map((c, i) => `${i + 1}. ${c.category} ${rp(c.total)}`).join('\\n');\nconst msg = `📊 *Today's Expenses*\\n\\nTotal: ${rp(d.total)}\\nTransactions: ${d.transactionCount}\\n\\n*Top Categories:*\\n${cats || 'No data'}`;\nreturn [{ json: { reply: msg } }];\n"
+      }
+    },
+    {
+      "id": "wa-0011-4000-8000-000000000011",
+      "name": "Format Monthly Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 550],
+      "parameters": {
+        "jsCode": "const d = $input.first().json.data;\nfunction rp(n) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n || 0); }\nconst start = new Date(d.period?.start);\nconst monthLabel = start.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });\nconst cats = (d.categories || []).slice(0, 5).map((c, i) => `${i + 1}. ${c.category} ${rp(c.total)}`).join('\\n');\nconst pay = (d.paymentBreakdown || []).map(p => `${p.paymentType}: ${p.percentage}%`).join(' · ');\nconst msg = `📅 *Monthly Summary — ${monthLabel}*\\n\\nTotal: ${rp(d.total)}\\nTransactions: ${d.transactionCount}\\n\\n*Top Categories:*\\n${cats || 'No data'}\\n\\n*Payment Types:*\\n${pay || 'No data'}`;\nreturn [{ json: { reply: msg } }];\n"
+      }
+    },
+    {
+      "id": "wa-0012-4000-8000-000000000012",
+      "name": "Format Category Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 700],
+      "parameters": {
+        "jsCode": "const d = $input.first().json.data;\nfunction rp(n) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n || 0); }\nconst merchants = (d.merchants || []).slice(0, 5).map(m => `- ${m.merchant} ${rp(m.total)}`).join('\\n');\nconst msg = `🏷️ *${d.category} Expenses*\\n\\nTotal: ${rp(d.total)}\\nTransactions: ${d.transactionCount}\\n\\n*Top Merchants:*\\n${merchants || 'No data'}`;\nreturn [{ json: { reply: msg } }];\n"
+      }
+    },
+    {
+      "id": "wa-0013-4000-8000-000000000013",
+      "name": "Format Bank Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 850],
+      "parameters": {
+        "jsCode": "const d = $input.first().json.data;\nfunction rp(n) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n || 0); }\nconst banks = (d.banks || []).map(b => `🏦 *${b.bankType}*: ${rp(b.total)} (${b.transactionCount} txns)`).join('\\n');\nconst msg = `🏦 *Expenses by Bank*\\n\\n${banks || 'No data'}`;\nreturn [{ json: { reply: msg } }];\n"
+      }
+    },
+    {
+      "id": "wa-0014-4000-8000-000000000014",
+      "name": "Format Payment Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 1000],
+      "parameters": {
+        "jsCode": "const d = $input.first().json.data;\nfunction rp(n) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n || 0); }\nconst items = (d.paymentTypes || []).map(p => `💳 *${p.paymentType}*: ${rp(p.total)} — ${p.percentage}%`).join('\\n');\nconst msg = `💳 *Payment Type Breakdown*\\n\\n${items || 'No data'}`;\nreturn [{ json: { reply: msg } }];\n"
+      }
+    },
+    {
+      "id": "wa-0015-4000-8000-000000000015",
+      "name": "Unknown Command Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 1150],
+      "parameters": {
+        "jsCode": "const msg = `🤖 *Finance Assistant*\\n\\nAvailable commands:\\n• *summary* — today's expenses\\n• *monthly summary* — this month\\n• *expenses by bank* — per bank\\n• *credit expenses* / *debit expenses* — by payment type\\n• *[category] expenses* — e.g. \"food expenses\"\\n• *show statements* — latest statements`;\nreturn [{ json: { reply: msg } }];\n"
+      }
+    },
+    {
+      "id": "wa-0016-4000-8000-000000000016",
+      "name": "Merge Replies",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2750, 700],
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      }
+    },
+    {
+      "id": "wa-0017-4000-8000-000000000017",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3000, 700],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Meta WhatsApp API"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.WHATSAPP_PHONE_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('Extract Message').item.json.phone }}\",\n  \"type\": \"text\",\n  \"text\": { \"body\": \"{{ $json.reply }}\" }\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "wa-0018-4000-8000-000000000018",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3250, 700],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"ok\" }",
+        "options": { "responseCode": 200 }
+      }
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [[{ "node": "Extract Message", "type": "main", "index": 0 }]]
+    },
+    "Extract Message": {
+      "main": [[{ "node": "Webhook Verification?", "type": "main", "index": 0 }]]
+    },
+    "Webhook Verification?": {
+      "main": [
+        [{ "node": "Respond With Challenge", "type": "main", "index": 0 }],
+        [{ "node": "Skip Empty?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Skip Empty?": {
+      "main": [
+        [],
+        [{ "node": "Verify Phone", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verify Phone": {
+      "main": [[{ "node": "Is Authorized?", "type": "main", "index": 0 }]]
+    },
+    "Is Authorized?": {
+      "main": [
+        [{ "node": "Send Unauthorized Message", "type": "main", "index": 0 }],
+        [{ "node": "Detect Intent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Detect Intent": {
+      "main": [[{ "node": "Route Intent", "type": "main", "index": 0 }]]
+    },
+    "Route Intent": {
+      "main": [
+        [{ "node": "Get Summary", "type": "main", "index": 0 }],
+        [{ "node": "Get Monthly Summary", "type": "main", "index": 0 }],
+        [{ "node": "Get Category Summary", "type": "main", "index": 0 }],
+        [{ "node": "Get Bank Summary", "type": "main", "index": 0 }],
+        [{ "node": "Get Payment Summary", "type": "main", "index": 0 }],
+        [{ "node": "Unknown Command Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Summary": {
+      "main": [[{ "node": "Format Summary Reply", "type": "main", "index": 0 }]]
+    },
+    "Get Monthly Summary": {
+      "main": [[{ "node": "Format Monthly Reply", "type": "main", "index": 0 }]]
+    },
+    "Get Category Summary": {
+      "main": [[{ "node": "Format Category Reply", "type": "main", "index": 0 }]]
+    },
+    "Get Bank Summary": {
+      "main": [[{ "node": "Format Bank Reply", "type": "main", "index": 0 }]]
+    },
+    "Get Payment Summary": {
+      "main": [[{ "node": "Format Payment Reply", "type": "main", "index": 0 }]]
+    },
+    "Format Summary Reply": {
+      "main": [[{ "node": "Merge Replies", "type": "main", "index": 0 }]]
+    },
+    "Format Monthly Reply": {
+      "main": [[{ "node": "Merge Replies", "type": "main", "index": 1 }]]
+    },
+    "Format Category Reply": {
+      "main": [[{ "node": "Merge Replies", "type": "main", "index": 2 }]]
+    },
+    "Format Bank Reply": {
+      "main": [[{ "node": "Merge Replies", "type": "main", "index": 3 }]]
+    },
+    "Format Payment Reply": {
+      "main": [[{ "node": "Merge Replies", "type": "main", "index": 4 }]]
+    },
+    "Unknown Command Reply": {
+      "main": [[{ "node": "Merge Replies", "type": "main", "index": 5 }]]
+    },
+    "Merge Replies": {
+      "main": [[{ "node": "Send WhatsApp Reply", "type": "main", "index": 0 }]]
+    },
+    "Send WhatsApp Reply": {
+      "main": [[{ "node": "Respond 200 OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {}
+}

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
-import { listStatements, getStatement, uploadStatement, serveStatementFile } from './statements.service'
+import { listStatements, getStatement, uploadStatement, serveStatementFile, removeStatement } from './statements.service'
 import { sendPaginated, sendSuccess, sendCreated } from '../../shared/utils/response'
 import { ValidationError } from '../../shared/errors'
 import type { UploadStatementDto, ListStatementsQuery } from './statements.schema'
@@ -38,6 +38,15 @@ export async function previewController(req: Request, res: Response, next: NextF
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', 'inline')
     res.sendFile(filePath)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function deleteController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await removeStatement(String(req.params.id))
+    sendSuccess(res, null, 'Statement deleted')
   } catch (err) {
     next(err)
   }

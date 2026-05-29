@@ -14,6 +14,7 @@ export const QUEUE_NAMES = {
 // ── Queue instances ────────────────────────────────────────────────────────────
 export const emailQueue = new Queue(QUEUE_NAMES.EMAIL_PROCESSING, { connection })
 export const aiQueue = new Queue(QUEUE_NAMES.AI_CATEGORIZATION, { connection })
+export const aiBatchQueue = new Queue('ai-batch-categorization', { connection })
 export const pdfQueue = new Queue(QUEUE_NAMES.PDF_PARSING, { connection })
 
 // ── Job types ──────────────────────────────────────────────────────────────────
@@ -25,11 +26,30 @@ export interface EmailJobData {
   attachments?: string[]
 }
 
+// Full email parse job — includes bankType so the worker can call processEmailTransaction directly
+export interface EmailParseJobData {
+  messageId: string
+  subject: string
+  from: string
+  body: string
+  bankType: 'BCA' | 'JENIUS' | 'UOB' | 'BRI'
+  receivedAt?: string
+}
+
 export interface AiCategorizationJobData {
   transactionId: string
   merchant: string
   amount: number
   bankType: string
+}
+
+export interface AiBatchCategorizationJobData {
+  transactions: Array<{
+    transactionId: string
+    merchant: string
+    amount: number
+    bankType: string
+  }>
 }
 
 export interface PdfParsingJobData {
@@ -43,8 +63,16 @@ export async function enqueueEmail(data: EmailJobData): Promise<void> {
   await emailQueue.add('process-email', data, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } })
 }
 
+export async function enqueueEmailParse(data: EmailParseJobData): Promise<void> {
+  await emailQueue.add('parse-email', data, { attempts: 3, backoff: { type: 'exponential', delay: 5000 } })
+}
+
 export async function enqueueAiCategorization(data: AiCategorizationJobData): Promise<void> {
-  await aiQueue.add('categorize', data, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } })
+  await aiQueue.add('categorize', data, { attempts: 5, backoff: { type: 'exponential', delay: 2000 } })
+}
+
+export async function enqueueAiBatch(data: AiBatchCategorizationJobData): Promise<void> {
+  await aiBatchQueue.add('categorize-batch', data, { attempts: 5, backoff: { type: 'exponential', delay: 2000 } })
 }
 
 export async function enqueuePdfParsing(data: PdfParsingJobData): Promise<void> {

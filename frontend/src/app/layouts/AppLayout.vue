@@ -1,12 +1,16 @@
 <template>
-  <div class="min-h-screen flex bg-[var(--color-bg)]">
+  <div class="min-h-screen flex" style="background: var(--color-bg);">
     <!-- Desktop sidebar -->
     <AppSidebar class="hidden md:flex" />
 
     <div class="flex-1 flex flex-col min-w-0">
       <AppHeader />
-      <main class="flex-1 p-4 md:p-6 overflow-auto pb-20 md:pb-6">
-        <RouterView />
+      <main class="flex-1 overflow-auto p-4 md:p-6 pb-24 md:pb-6">
+        <RouterView v-slot="{ Component }">
+          <Transition name="page" mode="out-in">
+            <component :is="Component" />
+          </Transition>
+        </RouterView>
       </main>
     </div>
 

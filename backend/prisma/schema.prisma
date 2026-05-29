@@ -21,8 +21,10 @@ model Transaction {
   subcategory     String     @default("")
   statementId     String?    @map("statement_id")
   statement       Statement? @relation(fields: [statementId], references: [id])
+  sourceMessageId String?    @map("source_message_id")
   createdAt       DateTime   @default(now()) @map("created_at")
 
+  @@unique([sourceMessageId])
   @@index([transactionDate])
   @@index([bankType])
   @@index([paymentType])
@@ -38,18 +40,34 @@ model Statement {
   uploadedAt     DateTime      @default(now()) @map("uploaded_at")
   transactions   Transaction[]
 
+  @@unique([bankType, statementMonth])
   @@index([bankType])
   @@index([statementMonth])
   @@map("statements")
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String   @default("")
-  avatarUrl String   @default("") @map("avatar_url")
-  googleId  String   @unique @map("google_id")
-  createdAt DateTime @default(now()) @map("created_at")
+  id                 String             @id @default(uuid())
+  email              String             @unique
+  name               String             @default("")
+  avatarUrl          String             @default("") @map("avatar_url")
+  googleId           String             @unique @map("google_id")
+  gmailRefreshToken  String?            @map("gmail_refresh_token")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  whatsappAccounts   WhatsappAccount[]
 
   @@map("users")
+}
+
+model WhatsappAccount {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  phoneNumber String   @map("phone_number") @db.VarChar(20)
+  isVerified  Boolean  @default(false) @map("is_verified")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+  @@index([phoneNumber])
+  @@map("whatsapp_accounts")
 }

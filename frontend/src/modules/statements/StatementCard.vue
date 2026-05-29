@@ -23,6 +23,13 @@
       >
         {{ previewing ? '…' : 'Preview' }}
       </button>
+      <button
+        :disabled="busy"
+        class="px-3 py-1.5 text-xs rounded-lg border border-[var(--color-danger)] text-[var(--color-danger)] hover:bg-red-50 transition-colors disabled:opacity-50"
+        @click="handleDelete"
+      >
+        {{ deleting ? '…' : 'Delete' }}
+      </button>
     </div>
   </div>
 </template>
@@ -36,11 +43,13 @@ const props = defineProps<{
   statement: Statement
   onDownload: (id: string) => Promise<string>
   onPreview: (id: string) => Promise<string>
+  onDelete: (id: string) => Promise<void>
 }>()
 
 const downloading = ref(false)
 const previewing = ref(false)
-const busy = computed(() => downloading.value || previewing.value)
+const deleting = ref(false)
+const busy = computed(() => downloading.value || previewing.value || deleting.value)
 
 async function handleDownload() {
   downloading.value = true
@@ -64,6 +73,16 @@ async function handlePreview() {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
   } finally {
     previewing.value = false
+  }
+}
+
+async function handleDelete() {
+  if (!confirm(`Delete ${props.statement.bank_type} ${formatMonth(props.statement.statement_month)} statement and all its transactions?`)) return
+  deleting.value = true
+  try {
+    await props.onDelete(props.statement.id)
+  } finally {
+    deleting.value = false
   }
 }
 

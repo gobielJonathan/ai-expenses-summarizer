@@ -1,7 +1,7 @@
 <template>
   <VisXYContainer :data="data" :height="height">
     <VisLine :x="xAccessor" :y="yAccessor" color="var(--color-primary)" />
-    <VisAxis type="x" :tickFormat="xTickFormat" :gridLine="false" />
+    <VisAxis type="x" :tickFormat="xTickFormat" :numTicks="numTicks" :gridLine="false" />
     <VisAxis type="y" :tickFormat="yTickFormat" :gridLine="false" />
     <VisCrosshair :template="tooltipTemplate" />
     <VisTooltip />
@@ -25,11 +25,13 @@ interface DataPoint {
 const props = withDefaults(defineProps<{
   data: DataPoint[]
   height?: number
+  numTicks?: number
   xTickFormat?: (v: unknown, i: number) => string
   yTickFormat?: (v: unknown, i: number) => string
   tooltipTemplate?: (d: DataPoint) => string
 }>(), {
   height: 220,
+  numTicks: undefined,
   xTickFormat: (v: unknown, _i: number) => String(v),
   yTickFormat: (v: unknown, _i: number) => {
     const n = Number(v)
