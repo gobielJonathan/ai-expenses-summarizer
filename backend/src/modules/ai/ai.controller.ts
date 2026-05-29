@@ -16,7 +16,7 @@ export async function summaryController(req: Request, res: Response, next: NextF
       take: 100,
     })
 
-    const txs = transactions.map((t) => ({
+    const txs = transactions.map((t: { merchant: string; amount: unknown; category: string; transactionDate: Date }) => ({
       ...t,
       amount: Number(t.amount),
     }))
