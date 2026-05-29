@@ -33,7 +33,7 @@ const steps = [
   {
     number: '04',
     title: 'View Your Analytics',
-    description: 'Log in to your Vue.js dashboard. See spending trends, category breakdowns, daily habits, bank summaries, and AI-generated prose insights about your finances.',
+    description: 'Log in to your dashboard. See spending trends, category breakdowns, daily habits, bank summaries, and AI-generated prose insights about your finances.',
     color: 'from-success-500 to-success-600',
     glowColor: 'rgba(16, 185, 129, 0.4)',
     badge: 'Live Dashboard',
