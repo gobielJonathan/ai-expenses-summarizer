@@ -31,7 +31,9 @@ async function request<T>(path: string, options?: RequestInit & { isFormData?: b
 
   if (!res.ok) {
     const message = body.error ?? body.message ?? `HTTP ${res.status}`
-    throw new Error(message)
+    const err = new Error(message) as Error & { status: number }
+    err.status = res.status
+    throw err
   }
 
   return body as ApiWrapper<T>

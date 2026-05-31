@@ -25,7 +25,6 @@ onMounted(async () => {
   }
 
   auth.setToken(token)
-  await auth.fetchUser()
 
   const redirect = (route.query.redirect as string | undefined) ?? '/dashboard'
   router.replace(redirect)

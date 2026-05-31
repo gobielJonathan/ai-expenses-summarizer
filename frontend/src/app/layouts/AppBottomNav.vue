@@ -1,6 +1,6 @@
 <template>
-  <nav class="fixed bottom-0 left-0 right-0 z-50 flex items-stretch safe-area-pb"
-    style="background: rgba(8,12,20,0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 1px solid rgba(255,255,255,0.07);">
+  <nav class="fixed bottom-0 z-50 flex items-stretch safe-area-pb"
+    style="left: 50%; transform: translateX(-50%); width: 100%; max-width: 375px; background: rgba(8,12,20,0.95); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 1px solid rgba(255,255,255,0.07);">
     <RouterLink
       v-for="item in navItems"
       :key="item.to"

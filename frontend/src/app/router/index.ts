@@ -45,6 +45,16 @@ const router = createRouter({
           name: 'settings',
           component: () => import('@/modules/settings/SettingsView.vue'),
         },
+        {
+          path: 'budget',
+          name: 'budget',
+          component: () => import('@/modules/budget/SetBudgetView.vue'),
+        },
+        {
+          path: 'add-transaction',
+          name: 'add-transaction',
+          component: () => import('@/modules/transactions/AddTransactionView.vue'),
+        },
       ],
     },
     {

@@ -282,7 +282,7 @@ async function syncUserMonthlyTransactions(userId: string, refreshToken: string,
   const listRes = await gmail.users.messages.list({
     userId: 'me',
     q: buildMonthlyTransactionQuery(month),
-    maxResults: 500,
+    maxResults: 10,
   })
 
   const messages = listRes.data.messages ?? []
@@ -410,17 +410,11 @@ export function startGmailCron(): void {
   }
 
   cron.schedule(daily, () => {
-    const url = `http://localhost:${env.PORT}/api/v1/gmail/sync/daily`
-    fetch(url, { method: 'POST', headers: { 'x-webhook-secret': env.N8N_WEBHOOK_SECRET } })
-      .then((r) => { if (!r.ok) logger.error(`Gmail daily cron: API responded ${r.status}`) })
-      .catch((err) => logger.error(`Gmail daily cron: fetch error — ${err}`))
+    runDailyCronTransaction().catch((err) => logger.error(`Gmail daily cron: ${err}`))
   })
 
   cron.schedule(monthly, () => {
-    const url = `http://localhost:${env.PORT}/api/v1/gmail/sync/monthly`
-    fetch(url, { method: 'POST', headers: { 'x-webhook-secret': env.N8N_WEBHOOK_SECRET } })
-      .then((r) => { if (!r.ok) logger.error(`Gmail monthly cron: API responded ${r.status}`) })
-      .catch((err) => logger.error(`Gmail monthly cron: fetch error — ${err}`))
+    runEstatementCron().catch((err) => logger.error(`Gmail monthly cron: ${err}`))
   })
 
   logger.info(`Gmail cron started — daily: ${daily} | monthly: ${monthly}`)

@@ -18,8 +18,13 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     try {
       user.value = await authService.getMe()
-    } catch {
-      logout()
+    } catch (err) {
+      // Only clear the session on 401 (invalid/expired token).
+      // Network errors or 5xx should preserve the token so the user
+      // isn't logged out on a hard refresh while the backend is slow.
+      if ((err as { status?: number }).status === 401) {
+        logout()
+      }
     }
   }
 

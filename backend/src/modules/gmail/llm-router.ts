@@ -13,10 +13,11 @@ const OPENROUTER_MODEL = 'deepseek/deepseek-v4-flash:free'
  * Throws on network/HTTP error.
  */
 export async function callLlm(prompt: string): Promise<string> {
-  if (env.isProd() && env.OPEN_ROUTER_API_KEY) {
-    return callOpenRouter(prompt)
-  }
-  return callOllama(prompt)
+  return callOpenRouter(prompt)
+  // if (env.isProd() && env.OPEN_ROUTER_API_KEY) {
+  //   return callOpenRouter(prompt)
+  // }
+  // return callOllama(prompt)
 }
 
 async function callOpenRouter(prompt: string): Promise<string> {
